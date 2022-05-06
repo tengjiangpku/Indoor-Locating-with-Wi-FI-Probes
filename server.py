@@ -5,11 +5,12 @@ from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 import pymysql
 import json
+from lru import lru
 
 pymysql.install_as_MySQLdb() # 这句？
 
 # initialize the positions of wifi sniffer
-p = np.array([[8.4, 0], [0, 3.8], [8.4, 6]]) #
+p = np.array([[0, 0], [4.2, 2.4], [4.2, 0]]) 
 # set mapping from mac of wifi sniffer to index
 mmac2idx = {'14:6b:9c:f3:eb:23': 0, '14:6b:9c:f4:03:e9': 1, '14:6b:9c:f4:04:1b': 2} # 三个探针
 
@@ -26,6 +27,7 @@ r = np.array([np.linalg.norm(targetPos - p[0]), np.linalg.norm(targetPos - p[1])
 # mark whether all distances are recalculated
 mark = [False, False, False] # 三个都更新一次，则更新一次位置
 receivedTime = ''
+rssi_lru = [lru(10),lru(10),lru(10)]
 
 app = Flask(__name__)
 
@@ -34,7 +36,7 @@ class Config(object):
     """配置参数"""
     # 设置连接数据库的URL
     user = 'root'
-    password = 'Gaojiang9'
+    password = 'xxxxxxxx' # 
     database = 'WiFi_probe_db'
     app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql://%s:%s@127.0.0.1:3306/%s' % (user, password, database)
 
@@ -64,10 +66,13 @@ class Pos(db.Model):
     x = db.Column(db.Float)
     y = db.Column(db.Float)
 
-@app.route('/', methods=['Post']) # 用Post
+@app.route('/', methods=['GET']) # 用Post
 def hello():
-    print('hello')
-    return 'welcome'
+    obj = db.session.query(Pos.x,Pos.y).order_by(Pos.id.desc()).first()
+    
+    print('obj is',obj.x)
+    return 'X: '+str(obj.x)+', '+'Y: '+str(obj.y)
+
 
 @app.route('/getJson', methods=['Post']) # 用Post
 def register():
@@ -85,7 +90,7 @@ def register():
         datalist = [Pos(time=datetime.strptime(receivedTime, "%c"), x=targetPos[0], y=targetPos[1])]
         db.session.add_all(datalist)
         db.session.commit()
-    return 'welcome'
+    return 'This is the page to get Json. Do not access.'
 
 '''
 @app.route('/getJson', methods=['Post']) # 从数据结构获取数据, 可以不新建一个Web Server 
@@ -103,11 +108,13 @@ def parseJson(receivedJson):
     for i in receivedJson["data"]:
         if i['mac'] == targetMac:
             j = i['rssi']
-            dis = rssi2dis(j)
-            print('idx:',idx,'dis:',dis,'rssi:',j)
-            r[idx] = dis
-            mark[idx] = True
-            receivedTime = receivedJson['time']
+            if float(i['rssi'])>-71:
+                rssi_lru[idx].insert(float(i['rssi']))
+                dis = rssi2dis(rssi_lru[idx].ave())
+                print('idx:',idx,'dis:',dis,'rssi:',j,'rssi_ave:',rssi_lru[idx].ave())
+                r[idx] = dis
+                mark[idx] = True
+                receivedTime = receivedJson['time']
 
 
 def rssi2dis(rssi):
